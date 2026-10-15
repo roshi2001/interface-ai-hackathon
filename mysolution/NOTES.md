@@ -38,7 +38,19 @@ The system is built in layers, each handling a different kind of fact on the sit
    of guessing. This is what lets it correctly decline to quote a rate for
    products the site doesn't actually publish (e.g. a 7/1 ARM).
 
-6. **Branch info** (`branch_info.py`): Branch addresses come from the
+6. **Conflict detection** (`conflicts()` in `solution.py`, built on
+   `rate_matching.py`): For every product/term combination, I compare all
+   pages that were crawled in the *same, most recent* snapshot. If more
+   than one page reports a different value for what should be the same
+   current fact (e.g. a stale mortgage calculator still showing ~6% while
+   the actual rates page shows 7.25%), that's flagged as a real conflict.
+   The same page-authority ranking used in `answer()` picks the winner, so
+   the reasoning is consistent between the two methods. A rate simply
+   changing between an older snapshot and a newer one is deliberately NOT
+   flagged here — that's normal passage of time, not a contradiction, and
+   is exactly what makes `as_of` questions meaningful instead.
+
+7. **Branch info** (`branch_info.py`): Branch addresses come from the
    contact page's location widget (matched by address text, not branch
    name, since every branch is generically labeled "Dupaco Credit Union").
    Lobby/drive-up hours are NOT on that widget — they're scattered across
@@ -46,18 +58,19 @@ The system is built in layers, each handling a different kind of fact on the sit
    schedule seen across the whole site and can report both a typical
    schedule and explicitly confirm when branches differ.
 
-7. **Simple facts** (`simple_facts.py`): The routing number is looked up
+8. **Simple facts** (`simple_facts.py`): The routing number is looked up
    directly by regex; genuinely static facts don't need the table
    machinery.
 
 ## What I'd improve with more time
 
-- `conflict_resolution` category: questions like "how many branches does
-  Dupaco have" require synthesizing a single current fact (e.g. "22") from
-  a boilerplate paragraph that's repeated, with different numbers, across
-  dozens of old press releases. I'd build a dedicated extractor that finds
-  each press release's own dateline and picks the most recently-dated
-  instance of the fact, rather than just the most recently-crawled page.
+- `conflict_resolution` category (distinct from the `conflicts()` method
+  above): questions like "how many branches does Dupaco have" require
+  synthesizing a single current fact (e.g. "22") from a boilerplate
+  paragraph that's repeated, with different numbers, across dozens of old
+  press releases. I'd build a dedicated extractor that finds each press
+  release's own dateline and picks the most recently-dated instance of the
+  fact, rather than just the most recently-crawled page.
 - Full enumeration (e.g. "list all certificate terms") currently works for
   credit cards and checking; extending it to certificates and savings
   tiers would help the remaining `list_completeness` cases.

@@ -31,6 +31,7 @@ from rate_matching import (  # noqa: E402
     compose_answer_text,
     detect_enumeration_category,
     enumerate_category,
+    find_table_conflicts,
     MIN_TRUSTED_SCORE,
     MIN_TRUSTED_SCORE_AS_OF,
 )
@@ -217,7 +218,17 @@ class DupacoKnowledge:
         return Answer(text=para[:600], sources=[Source(url=url, snapshot_id=sid)])
 
     def conflicts(self):
-        return []  # next step
+        found = find_table_conflicts(self.rate_rows)
+        return [
+            Conflict(
+                topic=c["topic"],
+                values=c["values"],
+                sources=[Source(url=url) for url, _ in c["sources"]],
+                resolution=c["resolution"],
+                reason=c["reason"],
+            )
+            for c in found
+        ]
 
 
 def build():

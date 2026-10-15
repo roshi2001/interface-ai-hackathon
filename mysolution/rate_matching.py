@@ -381,6 +381,67 @@ def enumerate_category(
     return out
 
 
+def find_table_conflicts(rows: List[RateRow]) -> List[dict]:
+    """A real conflict, per the assignment's own definition, is two pages
+    that *simultaneously* disagree about the same current fact -- e.g. the
+    rates page says 5.39% while a stale calculator page (crawled in the
+    very same pull) still says 5.34%. A rate simply *changing* between an
+    older snapshot and a newer one is NOT a conflict -- that's just time
+    passing, and is exactly what makes as_of questions meaningful. We only
+    flag a topic here when multiple *page types* disagree within the same,
+    single, most-recent snapshot.
+
+    Returns plain dicts (topic, values, sources, resolution, reason);
+    solution.py converts these into the real contract.Conflict objects so
+    this module doesn't need to import contract.py directly.
+    """
+    groups: Dict[str, List[RateRow]] = defaultdict(list)
+    for r in rows:
+        groups[_row_identity(r)].append(r)
+
+    global_latest = max((r.snapshot_date for r in rows), default=None)
+    if global_latest is None:
+        return []
+
+    conflicts = []
+    seen = set()
+    for group_rows in groups.values():
+        current = [r for r in group_rows if r.snapshot_date == global_latest]
+        # Compare by the row's actual numeric value(s), not the whole
+        # composed sentence -- two pages can phrase the same number
+        # differently and still agree, or share boilerplate phrasing while
+        # citing different numbers.
+        by_value: Dict[str, List[RateRow]] = defaultdict(list)
+        for r in current:
+            sig = tuple(sorted(v for v in r.columns.values() if re.search(r"\d", v)))
+            by_value[sig].append(r)
+        if len(by_value) <= 1:
+            continue  # every page agrees -- not a conflict
+
+        reps = [rows[0] for rows in by_value.values()]
+        reps.sort(key=lambda r: PAGE_TYPE_AUTHORITY.get(r.page_type, 2))
+        winner = reps[0]
+        losers = sorted({r.page_type for r in reps[1:]})
+        label = winner.section if winner.section.lower() not in winner.row_label.lower() else ""
+        topic = f"{label} {winner.row_label}".strip()
+
+        dedup_key = (topic, compose_answer_text(winner))
+        if dedup_key in seen:
+            continue
+        seen.add(dedup_key)
+
+        conflicts.append(
+            {
+                "topic": topic,
+                "values": sorted(compose_answer_text(r) for r in reps),
+                "sources": [(r.source_url, r.page_type) for r in current],
+                "resolution": compose_answer_text(winner),
+                "reason": f"{winner.page_type} is authoritative over {', '.join(losers)}",
+            }
+        )
+    return conflicts
+
+
 def compose_answer_text(row: RateRow) -> str:
     """Prefer showing APY alongside dividend rate when both exist (several
     expected answers in the eval quote both); otherwise show whatever
