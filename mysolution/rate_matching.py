@@ -41,11 +41,7 @@ _TIER_Q_SINGLE_RE = re.compile(r"\$\s*([\d,]{3,}(?:\.\d{2})?)")
 
 _INTRO_WORDS = {"intro", "introductory", "transfer", "promo", "promotional", "balance transfer"}
 
-# Words that mark a row as a *non-default* variant: only give them credit
-# if the question explicitly asks for that variant. Otherwise the plain
-# "standard" row should win by default (mirrors how a human rep would
-# answer "what's the rate on X" -- they wouldn't volunteer the jumbo or
-# intro-offer number unless asked).
+
 _NON_DEFAULT_WORDS = _INTRO_WORDS | {"jumbo"}
 
 _STOPWORDS = {
@@ -53,14 +49,6 @@ _STOPWORDS = {
     "can", "you", "me", "to", "and", "my", "i", "what's", "get",
 }
 
-# Question keyword -> row.section must contain one of these substrings to
-# get the bonus. Checked IN ORDER, and only the first rule whose trigger
-# phrase appears in the question is applied -- this is what lets "Share
-# Savings" out-rank "Holiday Club Savings" / "Bright Savings" (all three
-# contain the generic word "savings", so the generic rule must never fire
-# once a more specific product name is present), and "Platinum Visa"
-# out-rank "Business Platinum Visa" for a question that never says
-# "business".
 _CATEGORY_HINTS: List[Tuple[Tuple[str, ...], Tuple[str, ...]]] = [
     # -- specific product names first --
     (("share savings",), ("share savings",)),
@@ -74,11 +62,7 @@ _CATEGORY_HINTS: List[Tuple[Tuple[str, ...], Tuple[str, ...]]] = [
     (("free checking",), ("free checking",)),
     (("platinum visa", "platinum"), ("platinum visa",)),
     (("rewards visa", "rewards"), ("rewards visa",)),
-    # Known-absent product types *must* be checked before the broader
-    # "mortgage"/"loan" families below -- a question like "7/1 adjustable-
-    # rate mortgage" also contains the word "mortgage", and since only the
-    # first matching rule is applied, putting these after the broad rule
-    # would let "mortgage" match first and never reach this check at all.
+    
     (("adjustable-rate", "adjustable rate", "7/1 arm", "7/1"), ("arm", "adjustable")),
     (("construction loan",), ("construction",)),
     # -- broader families --
@@ -93,20 +77,12 @@ _CATEGORY_HINTS: List[Tuple[Tuple[str, ...], Tuple[str, ...]]] = [
     (("savings",), ("savings",)),
 ]
 
-# Below this score, a "match" is too weak to trust -- better to say we
-# don't know than to confidently state the wrong product's rate. A
-# question with an explicit as_of date never receives the +10 "seen in
-# the latest snapshot" recency bonus (deliberately -- we're being asked
-# about an earlier point in time on purpose), so a legitimate as_of match
-# scores meaningfully lower than a legitimate "current" match; using one
-# shared threshold would make genuine as_of answers look untrustworthy.
+
 MIN_TRUSTED_SCORE = 15.0
 MIN_TRUSTED_SCORE_AS_OF = 8.0
 
 
 def _stem(token: str) -> str:
-    # Crude plural stripping so "months" / "month", "accounts" / "account"
-    # etc. don't silently fail to match each other.
     if len(token) > 4 and token.endswith("ies"):
         return token[:-3] + "y"
     if len(token) > 3 and token.endswith("s") and not token.endswith("ss"):
@@ -189,13 +165,7 @@ def _row_identity(row: RateRow) -> str:
         extra.append(f"term{row.term_months}")
     if row.tier_low is not None:
         extra.append(f"tier{row.tier_low}-{row.tier_high}")
-    # Business and personal versions of an otherwise identically-labeled
-    # product (e.g. a "10 Month Fixed Jumbo Certificate Special" on both
-    # /rates and /business-rates) are genuinely different facts with
-    # different numbers -- without this, they'd merge into one group and
-    # each snapshot's "most recent" pick could silently become whichever
-    # one happened to be crawled last, regardless of which the question
-    # actually asked about.
+    
     if "business" in row.section.lower() or "business" in row.source_url.lower():
         extra.append("business")
     return base + ("|" + "|".join(extra) if extra else "")
@@ -220,9 +190,6 @@ def _score_identity(
                 score -= 10.0
             break
 
-    # Business vs. personal: many product families here have a parallel
-    # "Business ..." sibling (checking, savings, credit cards). Keep them
-    # from leaking into each other unless the question actually says so.
     wants_business = "business" in hints.question_lower
     row_is_business = "business" in section_lower
     if wants_business != row_is_business:
@@ -235,12 +202,6 @@ def _score_identity(
             score -= 3.0  # a *different*, specific term is a strong mismatch
 
     if hints.model_year is not None:
-        # The business renames its model-year brackets over time (an
-        # older bracket literally called "2023-26 Model Year" became
-        # "2024-27 Model Year" in a later snapshot). Matching on whether
-        # the *current* bracket's actual numeric range contains the year
-        # the person asked about is far more reliable than word overlap,
-        # which can't tell two differently-named brackets apart at all.
         yr = _row_year_range(sample_row.search_text)
         if yr is not None:
             if yr[0] <= hints.model_year <= yr[1]:
@@ -265,25 +226,11 @@ def _score_identity(
         score -= 8.0  # don't surface the jumbo/teaser number unless asked
     if hints.wants_nondefault and row_is_nondefault:
         score += 4.0
-
-    # Recency: when asking what's true *now* (no as_of given), a group
-    # whose most recent sighting isn't from the single latest snapshot at
-    # all is very likely terminology the business has since replaced --
-    # exactly the "2023-26 Model Year" vs. "2024-27 Model Year" case,
-    # where both ranges numerically contain the asked-about year, so
-    # range containment alone can't tell current naming from retired
-    # naming. Being seen in the newest crawl is a much stronger signal of
-    # "this is what's on the site right now" than word overlap ever is.
     if global_latest_date is not None and hints.as_of is None:
         if sample_row.snapshot_date == global_latest_date:
             score += 10.0
         else:
             score -= 10.0
-
-    # Page authority: prefer the canonical rates page, then product pages;
-    # a stale calculator-page copy of the same table should essentially
-    # never win when a better source is available for the same fact --
-    # this is literally the scenario the assignment is built around.
     score -= 3.0 * PAGE_TYPE_AUTHORITY.get(sample_row.page_type, 2)
 
     return score
@@ -304,9 +251,6 @@ def best_row_groups(
 
     scored: List[Tuple[float, str]] = []
     for identity, group_rows in groups.items():
-        # Score against the group's most recent instance -- section text
-        # (used for the category bonus) can drift across snapshots, and
-        # the newest phrasing is the one future questions will look like.
         sample = max(group_rows, key=lambda r: r.effective_sort_key)
         score = _score_identity(hints.tokens, sample, hints, global_latest_date)
         if score > 0:
@@ -323,16 +267,6 @@ def resolve_as_of(group_rows: List[RateRow], as_of: Optional[str]) -> Optional[R
         return None
     return max(eligible, key=lambda r: r.effective_sort_key)
 
-
-# Categories where a *general* question ("what credit cards do you
-# offer", "current checking account rates") genuinely expects every
-# product in the family listed together, not just the single best match
-# -- confirmed by the assignment's own expected answers, which quote
-# multiple cards/accounts side by side. Credit cards are the one family
-# where personal AND business variants both belong in that combined
-# answer; the business/personal split still applies to every other
-# category (a general savings or checking question should NOT pull in
-# the business side unless asked).
 _ENUMERATION_CATEGORIES = {
     "credit card": {"section_contains": ("visa",), "include_business": True},
     "checking": {"section_contains": ("checking",), "include_business": False},
@@ -407,10 +341,6 @@ def find_table_conflicts(rows: List[RateRow]) -> List[dict]:
     seen = set()
     for group_rows in groups.values():
         current = [r for r in group_rows if r.snapshot_date == global_latest]
-        # Compare by the row's actual numeric value(s), not the whole
-        # composed sentence -- two pages can phrase the same number
-        # differently and still agree, or share boilerplate phrasing while
-        # citing different numbers.
         by_value: Dict[str, List[RateRow]] = defaultdict(list)
         for r in current:
             sig = tuple(sorted(v for v in r.columns.values() if re.search(r"\d", v)))
