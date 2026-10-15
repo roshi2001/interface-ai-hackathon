@@ -36,9 +36,8 @@ class Fact:
         return f"{self.category}:{':'.join(self.qualifiers)}"
 
 
-# ---------------------------------------------------------------------------
-# Page-type classification -> drives authority ranking (see knowledge_base.py)
-# ---------------------------------------------------------------------------
+
+# Page-type classification -> drives authority ranking 
 
 _PAGE_TYPE_URL_PATTERNS = [
     (r"/calculat", "calculator"),
@@ -63,9 +62,8 @@ def classify_page_type(url: str, title: str) -> str:
     return "other"
 
 
-# ---------------------------------------------------------------------------
+
 # Qualifier extraction: what distinguishes two otherwise-similar facts
-# ---------------------------------------------------------------------------
 
 _TERM_RE = re.compile(r"(\d{1,3})[\s-]*month", re.IGNORECASE)
 
@@ -140,9 +138,8 @@ def _extract_qualifiers(context: str) -> Tuple[str, ...]:
     return tuple(dict.fromkeys(tags)) or ("general",)  # dedupe, keep order
 
 
-# ---------------------------------------------------------------------------
 # Rate / APY / fee value extraction
-# ---------------------------------------------------------------------------
+
 
 # Matches "15.50%" optionally followed by "-21.00%" (en-dash, em-dash, or
 # hyphen), with an optional footnote digit glued to a preceding label like
